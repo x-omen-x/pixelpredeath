@@ -1,0 +1,64 @@
+name: probe-build
+
+# Builds the throwaway probe into an UNSIGNED .ipa on a GitHub cloud Mac
+# and publishes it as a release so it can be downloaded straight from Safari
+# on the phone and opened in SideStore (which does the signing).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Probe/**"
+      - ".github/workflows/probe-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain (recorded as evidence)
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos swiftc --version
+
+      - name: Compile for iPhone (arm64, no signing)
+        run: |
+          mkdir -p build/Payload/Probe.app
+          xcrun --sdk iphoneos swiftc \
+            -target arm64-apple-ios16.0 \
+            -O -parse-as-library \
+            Probe/ProbeApp.swift \
+            -o build/Payload/Probe.app/Probe
+          cp Probe/Info.plist build/Payload/Probe.app/Info.plist
+          printf 'APPL????' > build/Payload/Probe.app/PkgInfo
+          plutil -lint build/Payload/Probe.app/Info.plist
+          file build/Payload/Probe.app/Probe
+
+      - name: Package unsigned IPA
+        run: |
+          cd build
+          zip -qr pixelpredeath-probe.ipa Payload
+          ls -lh pixelpredeath-probe.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixelpredeath-probe-ipa
+          path: build/pixelpredeath-probe.ipa
+
+      - name: Publish release with direct .ipa link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "probe-${{ github.run_number }}" \
+            build/pixelpredeath-probe.ipa \
+            --title "Probe build ${{ github.run_number }} (throwaway)" \
+            --notes "Unsigned pipeline probe. Not deadpixel. Install with SideStore."
